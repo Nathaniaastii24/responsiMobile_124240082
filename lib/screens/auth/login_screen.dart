@@ -5,7 +5,6 @@ import '../../utils/app_colors.dart';
 import '../../widgets/habitz_widgets.dart';
 import '../home/home_screen.dart';
 
-
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -15,6 +14,7 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
+
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -32,45 +32,77 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   // ==========================================
-  // SUBMIT
+  // SUBMIT / LOGIN / REGISTER
   // ==========================================
 
   Future<void> _submit() async {
     FocusScope.of(context).unfocus();
 
     if (!_formKey.currentState!.validate()) return;
+
     setState(() => _loading = true);
 
-    // TODO: ganti dengan proses autentikasi / database kamu yang asli.
-    // Di sini sesi hanya disimpan lokal agar AuthGate mengenali login.
-    final prefs = await SharedPreferences.getInstance();
-    final email = _emailController.text.trim();
+    try {
+      final prefs = await SharedPreferences.getInstance();
 
-    await prefs.setBool('is_logged_in', true);
-    await prefs.setInt('user_id', 1);
-    await prefs.setString('user_email', email);
+      final email = _emailController.text.trim();
+      final password = _passwordController.text;
 
-    if (_isRegister) {
-      await prefs.setString('user_name', _nameController.text.trim());
-    } else if ((prefs.getString('user_name') ?? '').isEmpty) {
-      // Saat masuk tanpa nama tersimpan, pakai bagian depan e-mail.
-      await prefs.setString('user_name', email.split('@').first);
+      // Catatan:
+      // Autentikasi masih menggunakan penyimpanan lokal.
+      // Belum menggunakan database atau server autentikasi.
+
+      if (_isRegister) {
+        await prefs.setString('user_name', _nameController.text.trim());
+      } else if ((prefs.getString('user_name') ?? '').isEmpty) {
+        await prefs.setString('user_name', email.split('@').first);
+      }
+
+      await prefs.setBool('is_logged_in', true);
+      await prefs.setInt('user_id', 1);
+      await prefs.setString('user_email', email);
+
+      // Password sengaja tidak disimpan sebagai SharedPreferences.
+
+      if (!mounted) return;
+
+      setState(() => _loading = false);
+
+      Navigator.of(
+        context,
+      ).pushReplacement(MaterialPageRoute(builder: (_) => const HomeScreen()));
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() => _loading = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Terjadi kesalahan: $e'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
-
-    if (!mounted) return;
-    setState(() => _loading = false);
-
-    Navigator.of(context)
-        .pushReplacement(MaterialPageRoute(builder: (_) => const HomeScreen()));
-  }
-
-  void _setMode(bool register) {
-    if (_isRegister == register) return;
-    setState(() => _isRegister = register);
   }
 
   // ==========================================
-  // STYLE
+  // MODE DAFTAR / MASUK
+  // ==========================================
+
+  void _setMode(bool register) {
+    if (_isRegister == register) return;
+
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      _isRegister = register;
+      _formKey.currentState?.reset();
+    });
+  }
+
+  // ==========================================
+  // INPUT DECORATION
   // ==========================================
 
   InputDecoration _decoration(String hint, IconData icon, {Widget? suffix}) {
@@ -88,7 +120,7 @@ class _LoginScreenState extends State<LoginScreen> {
       suffixIcon: suffix,
       filled: true,
       fillColor: const Color(0xFFF6F3FC),
-      contentPadding: const EdgeInsets.symmetric(vertical: 16),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
       border: border(Colors.transparent),
       enabledBorder: border(Colors.transparent),
       focusedBorder: border(AppColors.purple, 1.6),
@@ -98,72 +130,101 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   // ==========================================
-  // UI
+  // MAIN UI
   // ==========================================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.transparent,
       resizeToAvoidBottomInset: true,
+
       body: HabitzBackground(
         child: Stack(
           children: [
-            // DEKORASI LATAR
+            // DEKORASI ORB
+
             Positioned(
               top: -70,
               right: -50,
               child: _orb(210, AppColors.purple.withValues(alpha: 0.16)),
             ),
+
             Positioned(
               top: 150,
               left: -80,
               child: _orb(170, AppColors.pink.withValues(alpha: 0.18)),
             ),
+
             Positioned(
               bottom: -90,
               right: -40,
               child: _orb(240, AppColors.purpleSoft.withValues(alpha: 0.55)),
             ),
 
+            // KONTEN UTAMA
             SafeArea(
-              child: Center(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 24,
-                  ),
-                  child: TweenAnimationBuilder<double>(
-                    tween: Tween(begin: 0, end: 1),
-                    duration: const Duration(milliseconds: 700),
-                    curve: Curves.easeOutCubic,
-                    builder: (context, value, child) {
-                      return Opacity(
-                        opacity: value,
-                        child: Transform.translate(
-                          offset: Offset(0, 28 * (1 - value)),
-                          child: child,
-                        ),
-                      );
-                    },
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildBrand(),
-                        const SizedBox(height: 26),
-                        _buildCard(),
-                        const SizedBox(height: 18),
-                        const Text(
-                          'Berita luar angkasa terbaru, di genggamanmu.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppColors.secondaryText,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 24,
+                    ),
+
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minHeight: constraints.maxHeight - 48,
+                      ),
+
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 440),
+
+                          child: TweenAnimationBuilder<double>(
+                            tween: Tween(begin: 0, end: 1),
+                            duration: const Duration(milliseconds: 700),
+                            curve: Curves.easeOutCubic,
+
+                            builder: (context, value, child) {
+                              return Opacity(
+                                opacity: value,
+                                child: Transform.translate(
+                                  offset: Offset(0, 25 * (1 - value)),
+                                  child: child,
+                                ),
+                              );
+                            },
+
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _buildBrand(),
+
+                                const SizedBox(height: 26),
+
+                                _buildCard(),
+
+                                const SizedBox(height: 20),
+
+                                const Text(
+                                  'Berita luar angkasa terbaru, '
+                                  'di genggamanmu.',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: AppColors.secondaryText,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ],
+                      ),
                     ),
-                  ),
-                ),
+                  );
+                },
               ),
             ),
           ],
@@ -171,6 +232,10 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }
+
+  // ==========================================
+  // DEKORASI ORB
+  // ==========================================
 
   Widget _orb(double size, Color color) {
     return IgnorePointer(
@@ -183,15 +248,17 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   // ==========================================
-  // BRAND (LOGO + NAMA APP)
+  // BRAND
   // ==========================================
 
   Widget _buildBrand() {
-    return Column(
+    return const Column(
       children: [
-        const SizedBox(height: 16),
-        const Text(
+        SizedBox(height: 16),
+
+        Text(
           'SpaceNews Explorer',
+          textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: 24,
             fontWeight: FontWeight.w900,
@@ -204,12 +271,17 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   // ==========================================
-  // KARTU FORM
+  // FORM CARD
   // ==========================================
 
   Widget _buildCard() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+      width: double.infinity,
+
+      // Padding bawah ditambah agar footer
+      // tidak terlalu dekat dengan batas kartu.
+      padding: const EdgeInsets.fromLTRB(22, 22, 22, 26),
+
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(30),
@@ -221,16 +293,22 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ],
       ),
+
       child: Form(
         key: _formKey,
+
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
+
           children: [
+            // TOGGLE DAFTAR / MASUK
+
             _buildModeToggle(),
 
             const SizedBox(height: 22),
 
+            // JUDUL FORM
             AnimatedSwitcher(
               duration: const Duration(milliseconds: 250),
               child: Column(
@@ -239,17 +317,22 @@ class _LoginScreenState extends State<LoginScreen> {
                 children: [
                   Text(
                     _isRegister ? 'Buat akunmu' : 'Selamat datang kembali',
+
                     style: const TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.w800,
                       color: AppColors.ink,
                     ),
                   ),
+
                   const SizedBox(height: 4),
+
                   Text(
                     _isRegister
                         ? 'Mulai jelajahi berita luar angkasa.'
-                        : 'Senang melihatmu lagi. Lanjutkan penjelajahanmu.',
+                        : 'Senang melihatmu lagi. '
+                              'Lanjutkan penjelajahanmu.',
+
                     style: const TextStyle(
                       fontSize: 13,
                       color: AppColors.secondaryText,
@@ -261,98 +344,169 @@ class _LoginScreenState extends State<LoginScreen> {
 
             const SizedBox(height: 20),
 
-            // FIELD NAMA (hanya saat daftar, dengan animasi)
+            // FIELD NAMA
             AnimatedSize(
               duration: const Duration(milliseconds: 250),
               curve: Curves.easeOut,
               alignment: Alignment.topCenter,
+
               child: _isRegister
                   ? Padding(
                       padding: const EdgeInsets.only(bottom: 12),
+
                       child: TextFormField(
                         controller: _nameController,
                         textInputAction: TextInputAction.next,
                         textCapitalization: TextCapitalization.words,
+
                         decoration: _decoration(
                           'Nama lengkap',
                           Icons.person_outline_rounded,
                         ),
-                        validator: (v) => (v == null || v.trim().isEmpty)
-                            ? 'Nama wajib diisi'
-                            : null,
+
+                        validator: (value) {
+                          if (!_isRegister) return null;
+
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Nama wajib diisi';
+                          }
+
+                          return null;
+                        },
                       ),
                     )
-                  : const SizedBox(width: double.infinity),
+                  : const SizedBox(width: double.infinity, height: 0),
             ),
 
+            // FIELD EMAIL
             TextFormField(
               controller: _emailController,
               keyboardType: TextInputType.emailAddress,
               textInputAction: TextInputAction.next,
+              autofillHints: const [AutofillHints.email],
+
               decoration: _decoration(
                 'Alamat e-mail',
                 Icons.mail_outline_rounded,
               ),
-              validator: (v) {
-                final value = v?.trim() ?? '';
-                if (value.isEmpty) return 'E-mail wajib diisi';
-                if (!value.contains('@')) return 'E-mail tidak valid';
+
+              validator: (value) {
+                final email = value?.trim() ?? '';
+
+                if (email.isEmpty) {
+                  return 'E-mail wajib diisi';
+                }
+
+                if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
+                  return 'Format e-mail tidak valid';
+                }
+
                 return null;
               },
             ),
 
             const SizedBox(height: 12),
 
+            // FIELD PASSWORD
             TextFormField(
               controller: _passwordController,
               obscureText: _obscure,
               textInputAction: TextInputAction.done,
-              onFieldSubmitted: (_) => _submit(),
+              autofillHints: [
+                _isRegister
+                    ? AutofillHints.newPassword
+                    : AutofillHints.password,
+              ],
+
+              onFieldSubmitted: (_) {
+                if (!_loading) _submit();
+              },
+
               decoration: _decoration(
                 'Kata sandi',
                 Icons.lock_outline_rounded,
+
                 suffix: IconButton(
+                  onPressed: () {
+                    setState(() {
+                      _obscure = !_obscure;
+                    });
+                  },
+
                   icon: Icon(
                     _obscure
                         ? Icons.visibility_off_outlined
                         : Icons.visibility_outlined,
+
                     size: 20,
                     color: AppColors.secondaryText,
                   ),
-                  onPressed: () => setState(() => _obscure = !_obscure),
                 ),
               ),
-              validator: (v) =>
-                  (v == null || v.length < 6) ? 'Minimal 6 karakter' : null,
+
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Kata sandi wajib diisi';
+                }
+
+                if (value.length < 6) {
+                  return 'Minimal 6 karakter';
+                }
+
+                return null;
+              },
             ),
 
             const SizedBox(height: 22),
 
+            // TOMBOL SUBMIT
             _buildSubmitButton(),
 
-            const SizedBox(height: 6),
+            const SizedBox(height: 12),
 
+            // FOOTER DAFTAR / MASUK
+            // Menggunakan InkWell agar area klik
+            // lebih stabil dan tidak terpotong.
             Center(
-              child: TextButton(
-                onPressed: () => _setMode(!_isRegister),
-                child: Text.rich(
-                  TextSpan(
-                    text: _isRegister
-                        ? 'Sudah punya akun? '
-                        : 'Belum punya akun? ',
-                    style: const TextStyle(
-                      color: AppColors.secondaryText,
-                      fontSize: 13,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+
+                child: InkWell(
+                  onTap: () {
+                    _setMode(!_isRegister);
+                  },
+
+                  borderRadius: BorderRadius.circular(12),
+
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 8,
                     ),
-                    children: [
+
+                    child: Text.rich(
                       TextSpan(
-                        text: _isRegister ? 'Masuk' : 'Daftar',
+                        text: _isRegister
+                            ? 'Sudah punya akun? '
+                            : 'Belum punya akun? ',
+
                         style: const TextStyle(
-                          color: AppColors.purple,
-                          fontWeight: FontWeight.w800,
+                          color: AppColors.secondaryText,
+                          fontSize: 13,
                         ),
+
+                        children: [
+                          TextSpan(
+                            text: _isRegister ? 'Masuk' : 'Daftar',
+
+                            style: const TextStyle(
+                              color: AppColors.purple,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -374,15 +528,24 @@ class _LoginScreenState extends State<LoginScreen> {
       return Expanded(
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: () => _setMode(register),
+
+          onTap: () {
+            _setMode(register);
+          },
+
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 250),
             curve: Curves.easeOut,
+
             padding: const EdgeInsets.symmetric(vertical: 11),
+
             alignment: Alignment.center,
+
             decoration: BoxDecoration(
               color: selected ? Colors.white : Colors.transparent,
+
               borderRadius: BorderRadius.circular(14),
+
               boxShadow: selected
                   ? [
                       BoxShadow(
@@ -393,11 +556,14 @@ class _LoginScreenState extends State<LoginScreen> {
                     ]
                   : [],
             ),
+
             child: Text(
               label,
+
               style: TextStyle(
                 fontWeight: FontWeight.w800,
                 fontSize: 14,
+
                 color: selected ? AppColors.purple : AppColors.secondaryText,
               ),
             ),
@@ -408,10 +574,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
     return Container(
       padding: const EdgeInsets.all(4),
+
       decoration: BoxDecoration(
         color: const Color(0xFFF1ECFA),
         borderRadius: BorderRadius.circular(18),
       ),
+
       child: Row(children: [segment('Daftar', true), segment('Masuk', false)]),
     );
   }
@@ -425,15 +593,20 @@ class _LoginScreenState extends State<LoginScreen> {
 
     return Opacity(
       opacity: _loading ? 0.75 : 1,
+
       child: Container(
         height: 54,
+
         decoration: BoxDecoration(
           borderRadius: radius,
+
           gradient: const LinearGradient(
             begin: Alignment.centerLeft,
             end: Alignment.centerRight,
+
             colors: [AppColors.purple, AppColors.purpleDark],
           ),
+
           boxShadow: [
             BoxShadow(
               color: AppColors.purple.withValues(alpha: 0.38),
@@ -442,39 +615,34 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ],
         ),
+
         child: Material(
           color: Colors.transparent,
+
           child: InkWell(
             borderRadius: radius,
+
             onTap: _loading ? null : _submit,
+
             child: Center(
               child: _loading
                   ? const SizedBox(
                       width: 22,
                       height: 22,
+
                       child: CircularProgressIndicator(
                         strokeWidth: 2.5,
                         color: Colors.white,
                       ),
                     )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          _isRegister ? 'Ayo mulai!' : 'Masuk',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 16,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        const Icon(
-                          Icons.arrow_forward_rounded,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                      ],
+                  : Text(
+                      _isRegister ? 'Ayo mulai!' : 'Masuk',
+
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                      ),
                     ),
             ),
           ),
