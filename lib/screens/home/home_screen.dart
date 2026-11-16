@@ -52,6 +52,36 @@ class _HomeScreenState extends State<HomeScreen> {
     'European Spaceflight',
   ];
 
+  Color _getNewsColor(String newsSite) {
+    final source = newsSite.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+    if (source.contains('nasa')) {
+      return AppColors.NASA;
+    }
+
+    if (source.contains('spacepolicyonline')) {
+      return AppColors.SpacePolicyOnline;
+    }
+
+    if (source.contains('spacescout')) {
+      return AppColors.Space_Scout;
+    }
+
+    if (source.contains('spaceflightnow')) {
+      return AppColors.SpaceFlight_Now;
+    }
+
+    if (source.contains('arstechnica')) {
+      return AppColors.Arstechnica;
+    }
+
+    if (source.contains('europeanspaceflight')) {
+      return AppColors.European_Spaceflight;
+    }
+
+    return AppColors.unknown;
+  }
+
   // ==========================================
   // INITIALIZATION
   // ==========================================
@@ -820,18 +850,28 @@ class _HomeScreenState extends State<HomeScreen> {
   // ==========================================
 
   Widget _buildNewsBadge(String newsSite) {
+    final sourceColor = _getNewsColor(newsSite);
+
+    // Warna teks dibuat gelap khusus untuk sumber
+    // yang menggunakan warna sangat terang.
+    final isLightSource = newsSite.toLowerCase().contains('european');
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: AppColors.purpleSoft.withValues(alpha: 0.6),
+        color: sourceColor.withValues(alpha: 0.16),
         borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: sourceColor.withValues(alpha: 0.35),
+          width: 1,
+        ),
       ),
       child: Text(
         newsSite,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
-          color: AppColors.purpleDark,
+        style: TextStyle(
+          color: isLightSource ? AppColors.ink : sourceColor,
           fontSize: 10,
           fontWeight: FontWeight.w800,
         ),

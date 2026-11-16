@@ -25,7 +25,7 @@ class SpaceNewsExplorerApp extends StatelessWidget {
           onSecondary: AppColors.ink,
           tertiary: AppColors.yellow,
           onTertiary: AppColors.ink,
-          error: AppColors.NASA,
+          error: const Color.fromARGB(255, 194, 63, 56),
           surface: AppColors.surface,
           onSurface: AppColors.ink,
         );

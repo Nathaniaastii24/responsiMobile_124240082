@@ -47,14 +47,13 @@ class AppColors {
   static const Color text = ink;
 
   // ---------- Sumber berita ----------
-  //'NASA', '', '', '', '', ''
   static const Color NASA = Color(0xFF55B99A);
   static const Color SpacePolicyOnline = Color(0xFFEE8198);
   static const Color Space_Scout = Color.fromARGB(255, 129, 74, 104);
   static const Color SpaceFlight_Now = Color.fromARGB(255, 68, 183, 99);
   static const Color Arstechnica = Color.fromARGB(255, 101, 67, 143);
   static const Color European_Spaceflight = Color.fromARGB(255, 233, 255, 154);
-  static const Color unknown = Color.fromARGB(255, 104, 104, 103);
+  static const Color unknown = Color.fromARGB(255, 98, 160, 218);
 
 
   // ---------- Efek kaca (glass) ----------
@@ -79,7 +78,7 @@ class AppColors {
   static const Color yellow = softYellow;
   static const Color teal = mint;
   // static const Color coral = dead;
-  static const Color success = NASA;
+  static const Color success = Color.fromARGB(255, 60, 146, 74);
   static const Color primary = purple;
   static const Color secondary = pink;
   static const Color accent = softYellow;
