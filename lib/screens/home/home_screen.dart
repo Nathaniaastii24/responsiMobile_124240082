@@ -18,6 +18,10 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  // ==========================================
+  // STATE
+  // ==========================================
+
   int _selectedIndex = 0;
 
   String _userName = 'Explorer';
@@ -28,17 +32,29 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _searchTimer;
 
   List<Map<String, dynamic>> _results = [];
-  List<Map<String, dynamic>> _favorites = [];
-  List<Map<String, dynamic>> _episodes = [];
+  List<Map<String, dynamic>> _bookmarks = [];
 
   bool _isLoading = true;
-  bool _isLoadingEpisodes = false;
-
   String? _resultsError;
-  String? _episodeError;
 
   static const String _baseUrl =
       'https://api.spaceflightnewsapi.net/v4/articles';
+
+  static const String _bookmarkKey = 'bookmarked_articles';
+
+  final List<String> _newsSources = [
+    'All',
+    'NASA',
+    'SpacePolicyOnline.com',
+    'Space Scout',
+    'Spaceflight Now',
+    'Arstechnica',
+    'European Spaceflight',
+  ];
+
+  // ==========================================
+  // INITIALIZATION
+  // ==========================================
 
   @override
   void initState() {
@@ -62,110 +78,85 @@ class _HomeScreenState extends State<HomeScreen> {
       _userName = prefs.getString('user_name') ?? 'Explorer';
     });
 
-    await _loadFavorites();
+    await _loadBookmarks();
     await _loadResults();
   }
 
   // ==========================================
-  // API: LOAD BERITA
+  // API: LOAD ARTICLES
   // ==========================================
 
   Future<void> _loadResults() async {
+    if (!mounted) return;
+
     setState(() {
       _isLoading = true;
       _resultsError = null;
     });
 
     try {
-      final queryParameters = <String, String>{'limit': '50'};
+      final queryParameters = <String, String>{
+        'limit': '50',
+        'ordering': '-published_at',
+      };
 
+      // Filter berdasarkan sumber berita
       if (_selectedNews != 'All') {
-        queryParameters['race'] = _selectedNews; // tanpa toLowerCase
+        queryParameters['news_site'] = _selectedNews;
       }
 
-      if (_searchController.text.trim().isNotEmpty) {
-        queryParameters['name'] = _searchController.text.trim();
+      // Pencarian judul dan ringkasan
+      final keyword = _searchController.text.trim();
+
+      if (keyword.isNotEmpty) {
+        queryParameters['search'] = keyword;
       }
 
-      final uri = Uri.parse('$_baseUrl/results')
-          .replace(queryParameters: queryParameters);
+      final uri = Uri.parse(_baseUrl).replace(queryParameters: queryParameters);
 
-      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+      debugPrint('================================');
+      debugPrint('API URL: $uri');
+
+      final response = await http
+          .get(uri, headers: {'Accept': 'application/json'})
+          .timeout(const Duration(seconds: 20));
+
+      debugPrint('API STATUS: ${response.statusCode}');
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
 
-        // aman untuk dua bentuk: array langsung ATAU {items: [...]}
-        final List results = data is List ? data : (data['items'] ?? []);
+        if (data is! Map<String, dynamic>) {
+          throw Exception('Format respons API tidak valid.');
+        }
+
+        final List<dynamic> results = data['results'] ?? [];
+
+        final articles = results.map((item) {
+          return Map<String, dynamic>.from(item);
+        }).toList();
 
         if (!mounted) return;
 
         setState(() {
-          _results = results
-              .map((item) => Map<String, dynamic>.from(item))
-              .toList();
+          _results = articles;
           _isLoading = false;
         });
-      } else if (response.statusCode == 404) {
-        if (!mounted) return;
 
-        setState(() {
-          _results = [];
-          _isLoading = false;
-        });
+        debugPrint('JUMLAH BERITA: ${_results.length}');
+        debugPrint('================================');
       } else {
-        throw Exception('Gagal mengambil data berita.');
+        throw Exception('HTTP ${response.statusCode}: ${response.body}');
       }
     } catch (e) {
+      debugPrint('ERROR API: $e');
+
       if (!mounted) return;
 
       setState(() {
         _isLoading = false;
-        _resultsError =
-            'Tidak dapat mengambil data berita. Periksa koneksi internet.';
+        _resultsError = 'Gagal mengambil berita.\n$e';
       });
-    }
-  }
-
-  // ==========================================
-  // API: LOAD EPISODES
-  // ==========================================
-
-  Future<void> _loadEpisodes() async {
-    if (_episodes.isNotEmpty) return;
-
-    setState(() {
-      _isLoadingEpisodes = true;
-      _episodeError = null;
-    });
-
-    try {
-      final response = await http
-          .get(Uri.parse('$_baseUrl/episode'))
-          .timeout(const Duration(seconds: 15));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final List results = data['results'];
-
-        if (!mounted) return;
-
-        setState(() {
-          _episodes = results
-              .map((item) => Map<String, dynamic>.from(item))
-              .toList();
-          _isLoadingEpisodes = false;
-        });
-      } else {
-        throw Exception('Gagal mengambil episode.');
-      }
-    } catch (e) {
-      if (!mounted) return;
-
-      // setState(() {
-      //   _isLoadingEpisodes = false;
-      //   _episodeError = 'Gagal memuat episode. Coba lagi.';
-      // });
     }
   }
 
@@ -182,51 +173,70 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ==========================================
-  // FAVORITES: SHARED PREFERENCES
+  // BOOKMARK: SHARED PREFERENCES
   // ==========================================
 
-  Future<void> _loadFavorites() async {
+  Future<void> _loadBookmarks() async {
     final prefs = await SharedPreferences.getInstance();
 
-    final savedFavorites = prefs.getStringList('favorite_Results') ?? [];
+    // Membaca bookmark baru.
+    List<String> saved = prefs.getStringList(_bookmarkKey) ?? [];
+
+    // Migrasi bookmark dari versi lama.
+    if (saved.isEmpty) {
+      saved =
+          prefs.getStringList('favorite_results') ??
+          prefs.getStringList('favorite_Results') ??
+          [];
+    }
 
     final loaded = <Map<String, dynamic>>[];
 
-    for (final item in savedFavorites) {
+    for (final item in saved) {
       try {
         final decoded = jsonDecode(item);
 
         loaded.add(Map<String, dynamic>.from(decoded));
       } catch (e) {
-        // Lewati data favorit yang tidak valid.
+        debugPrint('Bookmark tidak valid: $e');
       }
     }
 
     if (!mounted) return;
 
     setState(() {
-      _favorites = loaded;
+      _bookmarks = loaded;
     });
+
+    // Simpan menggunakan nama key baru.
+    await prefs.setStringList(
+      _bookmarkKey,
+      loaded.map((item) => jsonEncode(item)).toList(),
+    );
   }
 
-  Future<void> _toggleFavorite(Map<String, dynamic> results) async {
-    final id = results['id'];
+  Future<void> _toggleBookmark(Map<String, dynamic> article) async {
+    final id = article['id'];
 
-    final exists = _favorites.any((item) => item['id'] == id);
+    if (id == null) return;
+
+    final exists = _isBookmarked(id);
 
     setState(() {
       if (exists) {
-        _favorites.removeWhere((item) => item['id'] == id);
+        _bookmarks.removeWhere(
+          (item) => item['id'].toString() == id.toString(),
+        );
       } else {
-        _favorites.add(results);
+        _bookmarks.add(article);
       }
     });
 
     final prefs = await SharedPreferences.getInstance();
 
     await prefs.setStringList(
-      'favorite_results',
-      _favorites.map((item) => jsonEncode(item)).toList(),
+      _bookmarkKey,
+      _bookmarks.map((item) => jsonEncode(item)).toList(),
     );
 
     if (!mounted) return;
@@ -235,8 +245,8 @@ class _HomeScreenState extends State<HomeScreen> {
       SnackBar(
         content: Text(
           exists
-              ? '${results['name']} dihapus dari favorit.'
-              : '${results['name']} ditambahkan ke favorit!',
+              ? 'Berita dihapus dari bookmark.'
+              : 'Berita berhasil ditambahkan ke bookmark!',
         ),
         backgroundColor: AppColors.purpleDark,
         behavior: SnackBarBehavior.floating,
@@ -244,8 +254,107 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  bool _isFavorite(int id) {
-    return _favorites.any((item) => item['id'] == id);
+  bool _isBookmarked(dynamic id) {
+    return _bookmarks.any((item) => item['id'].toString() == id.toString());
+  }
+
+  // ==========================================
+  // BOOKMARK SHEET
+  // ==========================================
+
+  void _showBookmarks() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, modalSetState) {
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.80,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+              ),
+              child: Column(
+                children: [
+                  const SizedBox(height: 12),
+
+                  Container(
+                    width: 42,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: AppColors.purpleSoft,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.bookmark_rounded,
+                          color: AppColors.purple,
+                          size: 25,
+                        ),
+                        const SizedBox(width: 10),
+                        const Expanded(
+                          child: Text(
+                            'Bookmark Saya',
+                            style: TextStyle(
+                              fontSize: 21,
+                              fontWeight: FontWeight.w900,
+                              color: AppColors.ink,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '${_bookmarks.length} berita',
+                          style: const TextStyle(
+                            color: AppColors.secondaryText,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const Divider(height: 1),
+
+                  Expanded(
+                    child: _bookmarks.isEmpty
+                        ? _buildEmptyState(
+                            Icons.bookmark_border_rounded,
+                            'Belum ada bookmark',
+                            'Simpan berita yang menarik untuk dibaca nanti.',
+                          )
+                        : GridView.builder(
+                            padding: const EdgeInsets.all(18),
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 2,
+                                  crossAxisSpacing: 13,
+                                  mainAxisSpacing: 13,
+                                  childAspectRatio: 0.69,
+                                ),
+                            itemCount: _bookmarks.length,
+                            itemBuilder: (context, index) {
+                              return _buildArticleCard(
+                                _bookmarks[index],
+                                onBookmarkChanged: () {
+                                  modalSetState(() {});
+                                },
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   // ==========================================
@@ -275,60 +384,133 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final pages = [
-      _buildHomeTab(),
-      _buildFavoriteTab(),
-      _buildEpisodeTab(),
-      _buildProfileTab(),
-    ];
+    // GradientBackground membungkus SELURUH Scaffold, sehingga AppBar
+    // dan body memakai satu gradient yang sama (tidak ada garis pemisah).
+    // Body tidak diperpanjang ke belakang AppBar, jadi konten tidak
+    // saling tabrak dengan judul AppBar.
+    return GradientBackground(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: GradientBackground(
-        child: SafeArea(
-          child: IndexedStack(index: _selectedIndex, children: pages),
+        // APP BAR (transparan, ikut gradient)
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          surfaceTintColor: Colors.transparent,
+          shadowColor: Colors.transparent,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          centerTitle: false,
+          toolbarHeight: _selectedIndex == 0 ? 70 : kToolbarHeight,
+          title: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _selectedIndex == 0 ? 'SpaceNews Explorer' : 'Profil Saya',
+                style: const TextStyle(
+                  color: AppColors.ink,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 19,
+                ),
+              ),
+
+              // SELAMAT DATANG (di bawah judul, hanya di tab Beranda)
+              if (_selectedIndex == 0) ...[
+                const SizedBox(height: 3),
+                Text(
+                  'Selamat datang, $_userName',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.secondaryText,
+                    fontWeight: FontWeight.w500,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ],
+          ),
+
+          // BOOKMARK DI KANAN APPBAR
+          actions: [
+            Stack(
+              alignment: Alignment.center,
+              children: [
+                IconButton(
+                  onPressed: _showBookmarks,
+                  tooltip: 'Bookmark',
+                  icon: const Icon(
+                    Icons.bookmark_outline_rounded,
+                    color: AppColors.purple,
+                    size: 28,
+                  ),
+                ),
+
+                if (_bookmarks.isNotEmpty)
+                  Positioned(
+                    right: 5,
+                    top: 5,
+                    child: Container(
+                      constraints: const BoxConstraints(
+                        minWidth: 16,
+                        minHeight: 16,
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: Colors.redAccent,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '${_bookmarks.length}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+
+            const SizedBox(width: 8),
+          ],
         ),
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) {
-          setState(() {
-            _selectedIndex = index;
-          });
 
-          if (index == 1) {
-            _loadFavorites();
-          }
+        body: SafeArea(
+          top: false,
+          child: IndexedStack(
+            index: _selectedIndex,
+            children: [_buildHomeTab(), _buildProfileTab()],
+          ),
+        ),
 
-          if (index == 2) {
-            _loadEpisodes();
-          }
-        },
-        backgroundColor: Colors.white,
-        indicatorColor: AppColors.purpleSoft,
-        elevation: 0,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home_rounded),
-            label: 'Beranda',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.bookmark),
-            selectedIcon: Icon(Icons.bookmark),
-            label: 'Tersimpan',
-          ),
-          // NavigationDestination(
-          //   icon: Icon(Icons.movie_outlined),
-          //   selectedIcon: Icon(Icons.movie_rounded),
-          //   label: 'Episode',
-          // ),
-          // NavigationDestination(
-          //   icon: Icon(Icons.person_outline_rounded),
-          //   selectedIcon: Icon(Icons.person_rounded),
-          //   label: 'Profil',
-          // ),
-        ],
+        // HANYA BERANDA DAN PROFIL
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _selectedIndex,
+          onDestinationSelected: (index) {
+            setState(() {
+              _selectedIndex = index;
+            });
+          },
+          backgroundColor: Colors.white.withValues(alpha: 0.85),
+          surfaceTintColor: Colors.transparent,
+          indicatorColor: AppColors.purpleSoft,
+          elevation: 0,
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.home_outlined),
+              selectedIcon: Icon(Icons.home_rounded),
+              label: 'Beranda',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.person_outline_rounded),
+              selectedIcon: Icon(Icons.person_rounded),
+              label: 'Profil',
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -345,24 +527,11 @@ class _HomeScreenState extends State<HomeScreen> {
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 22, 20, 10),
-            sliver: SliverToBoxAdapter(child: _buildHeader()),
-          ),
-
-          SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            sliver: SliverToBoxAdapter(),
-          ),
-
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 22, 20, 15),
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 15),
             sliver: SliverToBoxAdapter(child: _buildSearchField()),
           ),
 
-          SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            sliver: SliverToBoxAdapter(child: _buildStatusFilter()),
-          ),
+          SliverToBoxAdapter(child: _buildNewsFilter()),
 
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
@@ -379,7 +548,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   Text(
-                    '${_results.length} results',
+                    '${_results.length} berita',
                     style: const TextStyle(
                       color: AppColors.secondaryText,
                       fontSize: 12,
@@ -403,13 +572,12 @@ class _HomeScreenState extends State<HomeScreen> {
               child: _buildError(_resultsError!, _loadResults),
             )
           else if (_results.isEmpty)
-            const SliverFillRemaining(
+            SliverFillRemaining(
               hasScrollBody: false,
-              child: Center(
-                child: Text(
-                  'Berita tidak ditemukan.',
-                  style: TextStyle(color: AppColors.secondaryText),
-                ),
+              child: _buildEmptyState(
+                Icons.newspaper_rounded,
+                'Berita tidak ditemukan',
+                'Coba kata kunci atau sumber berita lainnya.',
               ),
             )
           else
@@ -423,60 +591,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   childAspectRatio: 0.69,
                 ),
                 delegate: SliverChildBuilderDelegate((context, index) {
-                  return _buildResultsCard(_results[index]);
+                  return _buildArticleCard(_results[index]);
                 }, childCount: _results.length),
               ),
             ),
         ],
       ),
-    );
-  }
-
-  // ==========================================
-  // HEADER
-  // ==========================================
-
-  Widget _buildHeader() {
-    return Row(
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Halo, Explorer!',
-                style: TextStyle(
-                  fontSize: 23,
-                  fontWeight: FontWeight.w900,
-                  color: AppColors.ink,
-                ),
-              ),
-              const SizedBox(height: 5),
-              Text(
-                'Selamat datang, $_userName',
-                style: const TextStyle(
-                  color: AppColors.secondaryText,
-                  fontSize: 13,
-                ),
-              ),
-            ],
-          ),
-        ),
-        GestureDetector(
-          onTap: () {
-            setState(() {
-              _selectedIndex = 3;
-            });
-          },
-          child: CircleAvatar(
-            radius: 25,
-            backgroundColor: AppColors.purpleSoft,
-            backgroundImage: const NetworkImage(
-              'https://api.spaceflightnewsapi.net/v4/articles/40854/https://assets.science.nasa.gov/dynamicimage/assets/science/missions/webb/science/2026/10/weic2620a.jpg',
-            ),
-          ),
-        ),
-      ],
     );
   }
 
@@ -489,10 +609,11 @@ class _HomeScreenState extends State<HomeScreen> {
       controller: _searchController,
       onChanged: _onSearchChanged,
       decoration: InputDecoration(
-        hintText: 'Cari berita...',
+        hintText: 'Cari berita luar angkasa...',
         prefixIcon: const Icon(Icons.search_rounded),
         suffixIcon: IconButton(
           onPressed: () {
+            _searchTimer?.cancel();
             _searchController.clear();
             _loadResults();
           },
@@ -510,78 +631,84 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ==========================================
-  // STATUS FILTER
+  // NEWS FILTER
   // ==========================================
 
-  Widget _buildStatusFilter() {
-    final statuses = [
-      'All',
-      'NASA',
-      'SpacePolicyOnline.com',
-      'Space Scout',
-      'SpaceFlight Now',
-      'Arstechnica',
-      'European Spaceflight',
-    ];
-
+  Widget _buildNewsFilter() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Filter Status',
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-            fontSize: 16,
-            color: AppColors.ink,
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 20),
+          child: Text(
+            'Filter Sumber Berita',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 16,
+              color: AppColors.ink,
+            ),
           ),
         ),
-        const SizedBox(height: 11),
-        Wrap(
-          spacing: 8,
-          children: statuses.map((status) {
-            final selected = _selectedNews == status;
 
-            return ChoiceChip(
-              label: Text(status == 'All' ? 'Semua' : status),
-              selected: selected,
-              onSelected: (_) {
-                setState(() {
-                  _selectedNews = status;
-                });
-                _loadResults();
-              },
-              selectedColor: AppColors.purple,
-              backgroundColor: Colors.white,
-              labelStyle: TextStyle(
-                color: selected ? Colors.white : AppColors.secondaryText,
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
-              ),
-              side: BorderSide.none,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-            );
-          }).toList(),
+        const SizedBox(height: 11),
+
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Row(
+            children: _newsSources.map((source) {
+              final selected = _selectedNews == source;
+
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ChoiceChip(
+                  label: Text(source == 'All' ? 'Semua' : source),
+                  selected: selected,
+                  showCheckmark: false,
+                  onSelected: (_) {
+                    setState(() {
+                      _selectedNews = source;
+                    });
+
+                    _loadResults();
+                  },
+                  selectedColor: AppColors.purple,
+                  backgroundColor: Colors.white,
+                  labelStyle: TextStyle(
+                    color: selected ? Colors.white : AppColors.secondaryText,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                  side: BorderSide.none,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
         ),
       ],
     );
   }
-
   // ==========================================
-  // BERITA CARD
+  // ARTICLE CARD
   // ==========================================
 
-  Widget _buildResultsCard(Map<String, dynamic> results) {
-    final int id = results['id'];
-    final bool favorite = _isFavorite(id);
+  Widget _buildArticleCard(
+    Map<String, dynamic> article, {
+    VoidCallback? onBookmarkChanged,
+  }) {
+    final id = article['id'];
+    final bool bookmarked = _isBookmarked(id);
 
     return GlassCard(
       padding: const EdgeInsets.all(8),
       radius: 24,
       blur: 12,
       opacity: 0.62,
-      onTap: () => _showResultsDetail(results),
+      onTap: () => _showArticleDetail(article),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -591,46 +718,25 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Image.network(
-                    results['image_url'],
-                    fit: BoxFit.cover,
-                    loadingBuilder: (context, child, progress) {
-                      if (progress == null) return child;
+                  _buildArticleImage(article['image_url']),
 
-                      return const Center(
-                        child: CircularProgressIndicator(
-                          color: AppColors.purple,
-                          strokeWidth: 2,
-                        ),
-                      );
-                    },
-                    errorBuilder: (context, error, stackTrace) {
-                      return Container(
-                        color: AppColors.purpleSoft,
-                        child: const Icon(
-                          Icons.person_rounded,
-                          size: 65,
-                          color: AppColors.purple,
-                        ),
-                      );
-                    },
-                  ),
                   Positioned(
                     top: 8,
                     right: 8,
                     child: Material(
-                      color: Colors.white.withValues(alpha: 0.88),
+                      color: Colors.white.withValues(alpha: 0.9),
                       shape: const CircleBorder(),
                       child: IconButton(
                         visualDensity: VisualDensity.compact,
-                        onPressed: () {
-                          _toggleFavorite(results);
+                        onPressed: () async {
+                          await _toggleBookmark(article);
+                          onBookmarkChanged?.call();
                         },
                         icon: Icon(
-                          favorite
-                              ? Icons.bookmark
-                              : Icons.bookmark_rounded,
-                          color: favorite ? AppColors.NASA : AppColors.purple,
+                          bookmarked
+                              ? Icons.bookmark_rounded
+                              : Icons.bookmark_border_rounded,
+                          color: AppColors.purple,
                           size: 21,
                         ),
                       ),
@@ -640,14 +746,15 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
+
           Padding(
             padding: const EdgeInsets.fromLTRB(4, 10, 4, 4),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  results['tittle'] ?? 'Unknown',
-                  maxLines: 1,
+                  article['title'] ?? 'Tanpa judul',
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: AppColors.ink,
@@ -655,8 +762,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     fontSize: 13,
                   ),
                 ),
+
                 const SizedBox(height: 7),
-                _buildStatusBadge(results['news_site'] ?? 'Unknown'),
+
+                _buildNewsBadge(article['news_site'] ?? 'Unknown'),
               ],
             ),
           ),
@@ -666,155 +775,237 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ==========================================
-  // STATUS BADGE
+  // ARTICLE IMAGE
   // ==========================================
 
-  Widget _buildStatusBadge(String news_site) {
-    Color color;
-
-    switch (news_site.toLowerCase()) {
-      case 'NASA':
-        color = AppColors.NASA;
-        break;
-      case 'dead':
-        color = AppColors.SpacePolicyOnline;
-        break;
-      case 'dead':
-        color = AppColors.Space_Scout;
-        break;
-      case 'dead':
-        color = AppColors.SpaceFlight_Now;
-        break;
-      case 'dead':
-        color = AppColors.Arstechnica;
-        break;
-      case 'dead':
-        color = AppColors.European_Spaceflight;
-        break;
-      default:
-        color = AppColors.unknown;
+  Widget _buildArticleImage(dynamic imageUrl) {
+    if (imageUrl == null || imageUrl.toString().isEmpty) {
+      return _buildImagePlaceholder();
     }
 
+    return Image.network(
+      imageUrl.toString(),
+      fit: BoxFit.cover,
+      loadingBuilder: (context, child, progress) {
+        if (progress == null) return child;
+
+        return const Center(
+          child: CircularProgressIndicator(
+            color: AppColors.purple,
+            strokeWidth: 2,
+          ),
+        );
+      },
+      errorBuilder: (context, error, stackTrace) {
+        return _buildImagePlaceholder();
+      },
+    );
+  }
+
+  Widget _buildImagePlaceholder() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 7,
-            height: 7,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 5),
-          Text(
-            news_site,
-            style: TextStyle(
-              color: color,
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
+      color: AppColors.purpleSoft,
+      child: const Center(
+        child: Icon(
+          Icons.rocket_launch_rounded,
+          size: 55,
+          color: AppColors.purple,
+        ),
       ),
     );
   }
 
   // ==========================================
-  // BERITA DETAIL
+  // NEWS BADGE
   // ==========================================
 
-  void _showResultsDetail(Map<String, dynamic> results) {
+  Widget _buildNewsBadge(String newsSite) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: AppColors.purpleSoft.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        newsSite,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: AppColors.purpleDark,
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+
+  // ==========================================
+  // ARTICLE DETAIL
+  // ==========================================
+
+  void _showArticleDetail(Map<String, dynamic> article) {
+    final authors = article['authors'] as List? ?? [];
+
+    final authorNames = authors
+        .map((author) => author['name'] ?? '')
+        .where((name) => name.toString().isNotEmpty)
+        .join(', ');
+
+    final publishedAt = _formatDate(article['published_at']);
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) {
-        final fields = {
-          'Race': results['race'],
-          'Sumber berita': results['news_site'],
-          'Tanggal publikasi': results['published_at'],
-          'Penulis': results['authors']['name'],
-          'Ringkasan': results['summary'],
-        };
+        return StatefulBuilder(
+          builder: (context, modalSetState) {
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.85,
+              padding: const EdgeInsets.all(24),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 42,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: AppColors.purpleSoft,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
 
-        return Container(
-          padding: const EdgeInsets.all(24),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 42,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: AppColors.purpleSoft,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(22),
-                  child: Image.network(
-                    results['image_url'],
-                    height: 190,
-                    width: 190,
-                    fit: BoxFit.contain,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  results['tittle'],
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: AppColors.ink,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 23,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                _buildStatusBadge(results['news_site'] ?? 'Unknown'),
-                const SizedBox(height: 22),
-                ...fields.entries.map((entry) {
-                  return _buildDetailRow(
-                    entry.key,
-                    entry.value?.toString() ?? '-',
-                  );
-                }),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      _toggleFavorite(results);
-                      Navigator.pop(context);
-                    },
-                    icon: Icon(
-                      _isFavorite(results['id'])
-                          ? Icons.bookmark
-                          : Icons.bookmark_border,
+                    const SizedBox(height: 22),
+
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(22),
+                      child: SizedBox(
+                        width: double.infinity,
+                        height: 200,
+                        child: _buildArticleImage(article['image_url']),
+                      ),
                     ),
-                    label: Text(
-                      _isFavorite(results['id'])
-                          ? 'Hapus dari Favorit'
-                          : 'Tambah ke Favorit',
+
+                    const SizedBox(height: 18),
+
+                    Text(
+                      article['title'] ?? 'Tanpa judul',
+                      style: const TextStyle(
+                        color: AppColors.ink,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 22,
+                      ),
                     ),
-                  ),
+
+                    const SizedBox(height: 12),
+
+                    _buildNewsBadge(article['news_site'] ?? 'Unknown'),
+
+                    const SizedBox(height: 20),
+
+                    _buildDetailRow('Sumber', article['news_site'] ?? '-'),
+
+                    _buildDetailRow('Tanggal', publishedAt),
+
+                    _buildDetailRow(
+                      'Penulis',
+                      authorNames.isEmpty ? '-' : authorNames,
+                    ),
+
+                    const SizedBox(height: 18),
+
+                    const Text(
+                      'Ringkasan Berita',
+                      style: TextStyle(
+                        color: AppColors.ink,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                      ),
+                    ),
+
+                    const SizedBox(height: 9),
+
+                    Text(
+                      article['summary'] ?? 'Tidak ada ringkasan.',
+                      textAlign: TextAlign.justify,
+                      style: const TextStyle(
+                        color: AppColors.secondaryText,
+                        fontSize: 14,
+                        height: 1.6,
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () async {
+                          await _toggleBookmark(article);
+                          modalSetState(() {});
+                        },
+                        icon: Icon(
+                          _isBookmarked(article['id'])
+                              ? Icons.bookmark_rounded
+                              : Icons.bookmark_border_rounded,
+                        ),
+                        label: Text(
+                          _isBookmarked(article['id'])
+                              ? 'Hapus dari Bookmark'
+                              : 'Tambah ke Bookmark',
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.purple,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(15),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 15),
+                  ],
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );
   }
+
+  // ==========================================
+  // FORMAT DATE
+  // ==========================================
+
+  String _formatDate(dynamic value) {
+    if (value == null) return '-';
+
+    try {
+      final date = DateTime.parse(value.toString()).toLocal();
+
+      final day = date.day.toString().padLeft(2, '0');
+      final month = date.month.toString().padLeft(2, '0');
+      final year = date.year;
+
+      return '$day/$month/$year';
+    } catch (e) {
+      return value.toString();
+    }
+  }
+
+  // ==========================================
+  // DETAIL ROW
+  // ==========================================
 
   Widget _buildDetailRow(String title, String value) {
     return Padding(
@@ -832,6 +1023,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
+
+          const Text(': '),
+
           Expanded(
             child: Text(
               value,
@@ -847,268 +1041,120 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ==========================================
-  // FAVORITE TAB
-  // ==========================================
-
-  Widget _buildFavoriteTab() {
-    return _buildPage(
-      title: 'Berita Tersimpan',
-      subtitle: 'Kumpulan berita pilihanmu.',
-      child: _favorites.isEmpty
-          ? _buildEmptyState(
-              Icons.bookmark,
-              'Belum ada berita tersimpan',
-              'Tekan ikon hati pada berita untuk menyimpannya.',
-            )
-          : GridView.builder(
-              padding: const EdgeInsets.fromLTRB(20, 15, 20, 25),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 13,
-                mainAxisSpacing: 13,
-                childAspectRatio: 0.69,
-              ),
-              itemCount: _favorites.length,
-              itemBuilder: (context, index) {
-                return _buildResultsCard(_favorites[index]);
-              },
-            ),
-    );
-  }
-
-  // ==========================================
-  // EPISODE TAB
-  // ==========================================
-
-  Widget _buildEpisodeTab() {
-    // Tiga variasi cahaya kartu, bergantian per baris.
-    const glows = <List<Color>>[
-      [Color(0xFFE5D5F8), Color(0xFFF3EAFC), Color(0xFFFFFFFF)], // ungu
-      [Color(0xFFFBD3E4), Color(0xFFFCEAF2), Color(0xFFFFFFFF)], // pink
-      [Color(0xFFD5E1FB), Color(0xFFEAF0FD), Color(0xFFFFFFFF)], // biru
-    ];
-
-    return _buildPage(
-      title: 'Daftar Episode',
-      subtitle: 'Jelajahi episode .',
-      child: _isLoadingEpisodes
-          ? const Center(
-              child: CircularProgressIndicator(color: AppColors.purple),
-            )
-          : _episodeError != null
-          ? _buildError(_episodeError!, () {
-              _episodes.clear();
-              _loadEpisodes();
-            })
-          : _episodes.isEmpty
-          ? _buildEmptyState(
-              Icons.movie_outlined,
-              'Episode belum tersedia',
-              'Silakan coba muat ulang.',
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.fromLTRB(20, 15, 20, 25),
-              itemCount: _episodes.length,
-              itemBuilder: (context, index) {
-                final episode = _episodes[index];
-
-                return GlassCard(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(14),
-                  radius: 22,
-                  blur: 10,
-                  opacity: 0.66,
-                  glow: glows[index % glows.length],
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: AppColors.buttonGradient,
-                          ),
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppColors.purple.withValues(alpha: 0.28),
-                              blurRadius: 12,
-                              offset: const Offset(0, 5),
-                            ),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.play_arrow_rounded,
-                          color: Colors.white,
-                          size: 28,
-                        ),
-                      ),
-                      const SizedBox(width: 13),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Text(
-                            //   episode['name'] ?? '-',
-                            //   maxLines: 2,
-                            //   overflow: TextOverflow.ellipsis,
-                            //   style: const TextStyle(
-                            //     fontWeight: FontWeight.w800,
-                            //     color: AppColors.ink,
-                            //   ),
-                            // ),
-                            // const SizedBox(height: 5),
-                            // Text(
-                            //   episode['episode'] ?? '',
-                            //   style: const TextStyle(
-                            //     color: AppColors.purpleDark,
-                            //     fontSize: 11,
-                            //     fontWeight: FontWeight.w700,
-                            //   ),
-                            // ),
-                            // const SizedBox(height: 3),
-                            // Text(
-                            //   episode['air_date'] ?? '-',
-                            //   style: const TextStyle(
-                            //     color: AppColors.secondaryText,
-                            //     fontSize: 11,
-                            //   ),
-                            // ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-    );
-  }
-
-  // ==========================================
   // PROFILE TAB
   // ==========================================
 
   Widget _buildProfileTab() {
-    return _buildPage(
-      title: 'Profil Saya',
-      subtitle: 'Informasi akun pengguna.',
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            const SizedBox(height: 8),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          const SizedBox(height: 5),
 
-            Container(
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [AppColors.pink, AppColors.purple],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.purple.withValues(alpha: 0.3),
+                  blurRadius: 26,
+                  offset: const Offset(0, 10),
+                ),
+              ],
+            ),
+            child: Container(
+              padding: const EdgeInsets.all(3),
+              decoration: const BoxDecoration(
                 shape: BoxShape.circle,
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [AppColors.pink, AppColors.purple],
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.purple.withValues(alpha: 0.30),
-                    blurRadius: 26,
-                    offset: const Offset(0, 10),
-                  ),
-                ],
+                color: Colors.white,
               ),
-              child: Container(
-                padding: const EdgeInsets.all(3),
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white,
-                ),
-                child: const CircleAvatar(
-                  radius: 54,
-                  backgroundColor: AppColors.purpleSoft,
-                  backgroundImage: NetworkImage(
-                    'https://api.spaceflightnewsapi.net/v4/articles/40854/https://assets.science.nasa.gov/dynamicimage/assets/science/missions/webb/science/2026/10/weic2620a.jpg',
-                  ),
+              child: const CircleAvatar(
+                radius: 54,
+                backgroundColor: AppColors.purpleSoft,
+                child: Icon(
+                  Icons.person_rounded,
+                  color: AppColors.purple,
+                  size: 60,
                 ),
               ),
             ),
-            const SizedBox(height: 16),
-            Text(
-              _userName,
-              style: const TextStyle(
-                color: AppColors.ink,
-                fontSize: 22,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 5),
-            const Text(
-              'Berita Explorer',
-              style: TextStyle(color: AppColors.secondaryText),
-            ),
-            const SizedBox(height: 22),
+          ),
 
-            // Kartu kaca ringkasan akun (angka asli dari daftar favorit)
-            GlassCard(
-              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 18),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.bookmark,
-                    color: AppColors.NASA,
-                    size: 22,
+          const SizedBox(height: 16),
+
+          Text(
+            _userName,
+            style: const TextStyle(
+              color: AppColors.ink,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+
+          const SizedBox(height: 5),
+
+          const Text(
+            'SpaceNews Explorer',
+            style: TextStyle(color: AppColors.secondaryText),
+          ),
+
+          const SizedBox(height: 22),
+
+          // BOOKMARK SUMMARY
+          GlassCard(
+            padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 18),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.bookmark_rounded,
+                  color: AppColors.purple,
+                  size: 24,
+                ),
+
+                const SizedBox(width: 10),
+
+                Text(
+                  '${_bookmarks.length} berita tersimpan',
+                  style: const TextStyle(
+                    color: AppColors.ink,
+                    fontWeight: FontWeight.w800,
                   ),
-                  const SizedBox(width: 10),
-                  Text(
-                    '${_favorites.length} berita tersimpan',
-                    style: const TextStyle(
-                      color: AppColors.ink,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-            const SizedBox(height: 14),
+          ),
 
-            _profileMenu(
-              Icons.bookmark,
-              'Berita Tersimpan',
-              'Lihat berita simpananmu',
-              () {
-                setState(() {
-                  _selectedIndex = 1;
-                });
-                _loadFavorites();
-              },
-            ),
+          const SizedBox(height: 14),
 
-            _profileMenu(
-              Icons.movie_rounded,
-              'Daftar Episode',
-              'Jelajahi episode',
-              () {
-                setState(() {
-                  _selectedIndex = 2;
-                });
-                _loadEpisodes();
-              },
-            ),
+          _profileMenu(
+            Icons.bookmark_rounded,
+            'Bookmark Saya',
+            'Lihat berita yang telah disimpan',
+            _showBookmarks,
+          ),
 
-            _profileMenu(
-              Icons.logout_rounded,
-              'Keluar',
-              'Logout dari akun',
-              _logout,
-              isLogout: true,
-            ),
-          ],
-        ),
+          _profileMenu(
+            Icons.logout_rounded,
+            'Keluar',
+            'Logout dari akun',
+            _logout,
+            isLogout: true,
+          ),
+        ],
       ),
     );
   }
+
+  // ==========================================
+  // PROFILE MENU
+  // ==========================================
 
   Widget _profileMenu(
     IconData icon,
@@ -1117,7 +1163,7 @@ class _HomeScreenState extends State<HomeScreen> {
     VoidCallback onTap, {
     bool isLogout = false,
   }) {
-    final Color accent = isLogout ? AppColors.NASA : AppColors.purple;
+    final Color accent = isLogout ? Colors.redAccent : AppColors.purple;
 
     return GlassCard(
       margin: const EdgeInsets.only(bottom: 12),
@@ -1125,9 +1171,6 @@ class _HomeScreenState extends State<HomeScreen> {
       radius: 22,
       blur: 10,
       opacity: 0.66,
-      glow: isLogout
-          ? const [Color(0xFFFBD3E4), Color(0xFFFCEAF2), Color(0xFFFFFFFF)]
-          : const [Color(0xFFE5D5F8), Color(0xFFF3EAFC), Color(0xFFFFFFFF)],
       onTap: onTap,
       child: Row(
         children: [
@@ -1140,7 +1183,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             child: Icon(icon, color: accent, size: 22),
           ),
+
           const SizedBox(width: 14),
+
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1149,10 +1194,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   title,
                   style: TextStyle(
                     fontWeight: FontWeight.w800,
-                    color: isLogout ? AppColors.NASA : AppColors.ink,
+                    color: isLogout ? Colors.redAccent : AppColors.ink,
                   ),
                 ),
+
                 const SizedBox(height: 3),
+
                 Text(
                   subtitle,
                   style: const TextStyle(
@@ -1163,50 +1210,13 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
+
           const Icon(
             Icons.chevron_right_rounded,
             color: AppColors.secondaryText,
           ),
         ],
       ),
-    );
-  }
-
-  // ==========================================
-  // REUSABLE PAGE
-  // ==========================================
-
-  Widget _buildPage({
-    required String title,
-    required String subtitle,
-    required Widget child,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 25, 20, 5),
-          child: Text(
-            title,
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w900,
-              color: AppColors.ink,
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-          child: Text(
-            subtitle,
-            style: const TextStyle(
-              fontSize: 13,
-              color: AppColors.secondaryText,
-            ),
-          ),
-        ),
-        Expanded(child: child),
-      ],
     );
   }
 
@@ -1222,16 +1232,21 @@ class _HomeScreenState extends State<HomeScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(icon, size: 65, color: AppColors.purpleSoft),
+
             const SizedBox(height: 15),
+
             Text(
               title,
+              textAlign: TextAlign.center,
               style: const TextStyle(
                 color: AppColors.ink,
                 fontWeight: FontWeight.w800,
                 fontSize: 17,
               ),
             ),
+
             const SizedBox(height: 7),
+
             Text(
               subtitle,
               textAlign: TextAlign.center,
@@ -1257,14 +1272,22 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.wifi_off_rounded, color: AppColors.NASA, size: 55),
+            const Icon(
+              Icons.wifi_off_rounded,
+              color: Colors.redAccent,
+              size: 55,
+            ),
+
             const SizedBox(height: 15),
+
             Text(
               message,
               textAlign: TextAlign.center,
               style: const TextStyle(color: AppColors.secondaryText),
             ),
+
             const SizedBox(height: 15),
+
             ElevatedButton.icon(
               onPressed: onRetry,
               icon: const Icon(Icons.refresh_rounded),
